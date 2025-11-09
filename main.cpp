@@ -24,7 +24,7 @@ struct IfState {
     bool skipping; // true — we skip body
 };
 
-static std::regex locRegex(R"(^loc\s+(\w+)\s*=\s*(int|str)\((.*)\)\s*!$)");
+static std::regex locRegex(R"(^loc\s+(\w+)\s*=\s*(int|str|bool|arr)\((.*)\)\s*!$)");
 static std::regex assignRegex(R"(^(\w+)\s*=\s*(.+)\!$)");
 static std::regex inputRegex(R"(^(\w+)\s*=\s*input--\s*(i|str)-\s*\"([^\"]*)\"!$)");
 static std::regex funRegex(R"(^funS\s+(\w+)\s+(\w+)\(([^)]*)\):\s*\{$)");
@@ -53,6 +53,29 @@ void processLoc(Context &ctx, const std::smatch &m, int lineno) {
     } else if (type == "int") {
         std::string val = evalExpression(raw); // we assume that evalExpression returns a string representation of int
         ctx.variables[name] = {"int", val};
+    } else if (type == "bool") {
+        std::string val = trim(raw);
+        if (val == "true" || val == "1") ctx.variables[name] = {"bool", "true"};
+        else if (val == "false" || val == "0") ctx.variables[name] = {"bool", "false"};
+        else errorAndExit(lineno, "Invalid bool value: " + val);
+    } else if (type == "arr") {
+        std::string rawList = trim(raw);
+        std::vector<std::string> elements;
+        std::stringstream ss(rawList);
+        std::string item;
+        while (std::getline(ss, item, ',')) {
+            item = trim(item);
+            if (item.size() >= 2 && item.front() == '"' && item.back() == '"')
+                item = item.substr(1, item.size() - 2);
+            elements.push_back(item);
+        }
+        std::ostringstream os;
+        for (size_t i = 0; i < elements.size(); ++i) {
+            if (i) os << ",";
+            os << elements[i];
+        }
+        ctx.variables[name] = {"arr", os.str()};
+        
     } else {
         errorAndExit(lineno, "Unknown type for loc: " + type);
     }
@@ -64,7 +87,12 @@ void processAssign(Context &ctx, const std::smatch &m, int lineno) {
     std::string rhs = trim(m[2]);
     auto &var = ctx.variables[name];
     if (var.type == "int") var.value = evalExpression(rhs);
-    else {
+    else if (var.type == "bool") {
+        rhs = trim(rhs);
+        if (rhs == "true" || rhs == "1") var.value = "true";
+        else if (rhs == "false" || rhs == "0") var.value = "false";
+        else errorAndExit(lineno, "Invalid bool assignment: " + rhs);
+    } else {
         if (rhs.size() >= 2 && rhs.front() == '"' && rhs.back() == '"') rhs = rhs.substr(1, rhs.size() - 2);
         var.value = rhs;
     }
@@ -89,7 +117,21 @@ void processPrint(Context &ctx, const std::smatch &m, int lineno) {
         // variable
         std::string var = m[3];
         if (!ctx.variables.count(var)) { std::cerr << "Undefined variable: " << var << std::endl; return; }
-        std::cout << ctx.variables[var].value << std::endl;
+        auto &v = ctx.variables[var];
+        if (v.type == "arr") {
+            std::stringstream ss(v.value);
+            std::string item;
+            std::vector<std::string> vals;
+            while (std::getline(ss, item, ',')) vals.push_back(trim(item));
+            std::cout << "[";
+            for (size_t i = 0; i < vals.size(); ++i) {
+                std::cout << vals[i];
+                if (i != vals.size() - 1) std::cout << ", ";
+            }
+            std::cout << "]" << std::endl;
+        } else {
+            std::cout << v.value << std::endl;
+        }
     } else if (m[4].matched) {
         std::string fname = m[4];
         std::string argsStr = m[5];
